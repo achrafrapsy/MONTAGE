@@ -1,0 +1,9 @@
+# Runtime downloads and generated outputs — never committed.
+stock/
+work/
+__pycache__/
+*.pyc
+# Decoded binary assets (regenerated from the .b64 files in assets/).
+assets/*.wav
+assets/*.png
+assets/*.jpg
