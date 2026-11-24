@@ -1,0 +1,12 @@
+# Runtime downloads and generated outputs — never committed.
+node_modules/
+out/
+dist/
+# Media is copied into public/ at render time (workflow / local test).
+# Only .gitkeep is committed; the videos, audio and images are not.
+public/assets/
+public/stock/
+public/*.mp4
+public/*.wav
+public/*.jpg
+public/*.png
