@@ -1,0 +1,31 @@
+{
+  "sr": 24000,
+  "gap_s": 0.15,
+  "voice": "am_adam",
+  "chunks": [
+    {
+      "text": "Can a machine feel? Like, actually feel? AI can solve equations, write code, hold a conversation \u2014 but can it show mercy? Can it know remorse?",
+      "start": 0.0,
+      "end": 9.025,
+      "words": 26
+    },
+    {
+      "text": "This book, The Digital Mind and the Human Heart, asks the question nobody's asking: what happens when machines get smarter than us, but still have no heart?",
+      "start": 9.175,
+      "end": 18.6,
+      "words": 27
+    },
+    {
+      "text": "It made me rethink everything about AI. About what makes us human. About what we lose if we hand the machine the keys.",
+      "start": 18.75,
+      "end": 26.4,
+      "words": 23
+    },
+    {
+      "text": "If you've ever wondered where all this is going, you need to read this. Link in bio.",
+      "start": 26.55,
+      "end": 31.825,
+      "words": 17
+    }
+  ]
+}
