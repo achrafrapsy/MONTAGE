@@ -1,0 +1,158 @@
+name: Render UGC Reel (Remotion)
+
+# Renders the UGC book trailer for "The Digital Mind and the Human Heart"
+# with the FULL OpenMontage + Remotion pipeline: the same v3 voiceover
+# (Kokoro am_adam), script, stock clips and book images as the FFmpeg
+# workflow, but composed and rendered with Remotion (React) — spring-based
+# captions via OpenMontage's CaptionOverlay, TransitionSeries crossfades,
+# eased Ken Burns zooms, vignette and fade-out.
+#
+# The video is uploaded as an artifact (book-reel-ugc-remotion, 7-day
+# retention) and is never committed to the repo.
+#
+# Runs on the standard ubuntu-latest runner (free on public repos).
+# No secrets are used. No GPU / larger runners.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'remotion/**'
+      - 'scripts/build_captions_ts.py'
+      - 'scripts/run_transcribe.py'
+      - 'scripts/run_subtitle_gen.py'
+      - 'tools/**'
+      - 'phrases.txt'
+      - 'timings-v3.json'
+      - 'requirements.txt'
+      - '.github/workflows/render-reel-remotion.yml'
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        # ffmpeg + fonts for the caption/media prep; the libnss3/libatk… set
+        # is what Remotion's headless Chrome needs on Ubuntu.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg fonts-noto-core \
+            libnss3 libdbus-1-3 libatk1.0-0 libatk-bridge2.0-0 libcups2 \
+            libdrm2 libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 \
+            libxrandr2 libgbm1 libpango-1.0-0 libcairo2 libasound2
+
+      - name: Set up Node 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: remotion/package-lock.json
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Python dependencies
+        run: |
+          python3 -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Decode binary assets
+        # Binaries are stored base64-encoded in ~100KB chunks
+        # (.b64.partNN) because the repo upload tooling is text-only
+        # and cannot carry multi-MB arguments; reassemble + decode.
+        # Voiceover is FLAC (lossless, same samples as the v3 WAV);
+        # decode to WAV so the pipeline sees the exact v3 input.
+        # Images are JPEG q90 (visually identical for video).
+        run: |
+          cat assets/voiceover-v3.flac.b64.part* | base64 -d > assets/voiceover-v3.flac
+          ffmpeg -y -v error -i assets/voiceover-v3.flac -ar 24000 -ac 1 assets/voiceover-v3.wav
+          cat assets/cover-scene-human-robot-v2.jpg.b64.part* | base64 -d > assets/cover-scene-human-robot-v2.jpg
+          cat assets/cover_front.jpg.b64.part* | base64 -d > assets/cover_front.jpg
+          ls -la assets/
+
+      - name: Download stock clips (Pexels, free licence)
+        # Pexels download endpoint 302-redirects to the original-quality
+        # file on videos.pexels.com. Clips are NOT committed (146 MB).
+        run: |
+          mkdir -p stock
+          curl -sL -o stock/robot1.mp4 "https://www.pexels.com/download/video/35280160/"
+          curl -sL -o stock/robot2.mp4 "https://www.pexels.com/download/video/35280159/"
+          curl -sL -o stock/code1.mp4 "https://www.pexels.com/download/video/33314914/"
+          curl -sL -o stock/read1.mp4 "https://www.pexels.com/download/video/12537161/"
+          curl -sL -o stock/read2.mp4 "https://www.pexels.com/download/video/6549527/"
+          curl -sL -o stock/cyborg.mp4 "https://www.pexels.com/download/video/6153727/"
+          ls -la stock/
+          echo "== verify every clip is a real video =="
+          for f in stock/*.mp4; do
+            ffprobe -v error -show_entries format=duration -of csv=p=0 "$f" || exit 1
+          done
+
+      - name: Transcribe voiceover (OpenMontage transcriber)
+        run: python3 scripts/run_transcribe.py
+
+      - name: Generate subtitles (OpenMontage subtitle_gen)
+        run: python3 scripts/run_subtitle_gen.py
+
+      - name: Build Remotion captions
+        # Same word timings + script words + chunk fixes as build_ass.py,
+        # emitted as a TypeScript WordCaption[] module for the composition.
+        run: python3 scripts/build_captions_ts.py
+
+      - name: Prepare Remotion media
+        # Copy the decoded assets and the stock clips into remotion/public/
+        # (Remotion serves them via staticFile()). The 4K stock clips are
+        # pre-scaled to the 1080x1920 composition resolution first, so the
+        # headless-Chrome render decodes 1080p, not 4K — this is source
+        # preparation only; the composition and all motion graphics are
+        # Remotion. Only the 4 clips the composition uses are scaled.
+        run: |
+          mkdir -p remotion/public/assets remotion/public/stock
+          cp assets/voiceover-v3.wav remotion/public/assets/voiceover-v3.wav
+          cp assets/cover-scene-human-robot-v2.jpg remotion/public/assets/cover-scene-human-robot-v2.jpg
+          cp assets/cover_front.jpg remotion/public/assets/cover_front.jpg
+          VF="scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,fps=30,format=yuv420p"
+          for clip in robot1 code1 cyborg read2; do
+            ffmpeg -y -v error -i "stock/$clip.mp4" -vf "$VF" -c:v libx264 -preset veryfast -crf 18 -an "remotion/public/stock/$clip.mp4"
+          done
+          ls -la remotion/public/assets/ remotion/public/stock/
+
+      - name: Install Node dependencies
+        working-directory: remotion
+        run: npm ci
+
+      - name: Ensure Remotion browser
+        working-directory: remotion
+        run: npx remotion browser ensure
+
+      - name: Validate composition
+        working-directory: remotion
+        run: npx remotion compositions src/index.tsx
+
+      - name: Render with Remotion
+        working-directory: remotion
+        run: |
+          npx remotion render src/index.tsx UgcReel \
+            ../work/book-reel-ugc-remotion.mp4 \
+            --codec=h264 --crf=20
+          ls -la ../work/book-reel-ugc-remotion.mp4
+
+      - name: Verify output
+        run: |
+          ffprobe -v error -show_entries format=duration,size \
+            -show_entries stream=codec_type,codec_name,width,height,r_frame_rate \
+            -of default=noprint_wrappers=1 work/book-reel-ugc-remotion.mp4
+          ls -la work/book-reel-ugc-remotion.mp4
+
+      - name: Upload video artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: book-reel-ugc-remotion
+          path: work/book-reel-ugc-remotion.mp4
+          retention-days: 7
