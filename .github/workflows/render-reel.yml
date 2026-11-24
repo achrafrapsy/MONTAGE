@@ -1,0 +1,104 @@
+name: Render UGC Reel
+
+# Renders the UGC book trailer for "The Digital Mind and the Human Heart"
+# with OpenMontage tools + FFmpeg. The video is uploaded as an artifact
+# (book-reel-ugc, 7-day retention) and is never committed to the repo.
+#
+# Runs on the standard ubuntu-latest runner (free on public repos).
+# No secrets are used. No GPU / larger runners.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'assets/**'
+      - 'scripts/**'
+      - 'tools/**'
+      - 'phrases.txt'
+      - 'timings-v3.json'
+      - 'requirements.txt'
+      - '.github/workflows/render-reel.yml'
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg fonts-noto-core
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Python dependencies
+        run: |
+          python3 -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Decode binary assets
+        # Binaries are stored base64-encoded in ~100KB chunks
+        # (.b64.partNN) because the repo upload tooling is text-only
+        # and cannot carry multi-MB arguments; reassemble + decode.
+        # Voiceover is FLAC (lossless, same samples as the v3 WAV);
+        # decode to WAV so the pipeline sees the exact v3 input.
+        # Images are JPEG q90 (visually identical for video).
+        run: |
+          cat assets/voiceover-v3.flac.b64.part* | base64 -d > assets/voiceover-v3.flac
+          ffmpeg -y -v error -i assets/voiceover-v3.flac -ar 24000 -ac 1 assets/voiceover-v3.wav
+          cat assets/cover-scene-human-robot-v2.jpg.b64.part* | base64 -d > assets/cover-scene-human-robot-v2.jpg
+          cat assets/cover_front.jpg.b64.part* | base64 -d > assets/cover_front.jpg
+          ls -la assets/
+
+      - name: Download stock clips (Pexels, free licence)
+        # Pexels download endpoint 302-redirects to the original-quality
+        # file on videos.pexels.com. Clips are NOT committed (146 MB).
+        run: |
+          mkdir -p stock
+          curl -sL -o stock/robot1.mp4 "https://www.pexels.com/download/video/35280160/"
+          curl -sL -o stock/robot2.mp4 "https://www.pexels.com/download/video/35280159/"
+          curl -sL -o stock/code1.mp4 "https://www.pexels.com/download/video/33314914/"
+          curl -sL -o stock/read1.mp4 "https://www.pexels.com/download/video/12537161/"
+          curl -sL -o stock/read2.mp4 "https://www.pexels.com/download/video/6549527/"
+          curl -sL -o stock/cyborg.mp4 "https://www.pexels.com/download/video/6153727/"
+          ls -la stock/
+          echo "== verify every clip is a real video =="
+          for f in stock/*.mp4; do
+            ffprobe -v error -show_entries format=duration -of csv=p=0 "$f" || exit 1
+          done
+
+      - name: Transcribe voiceover (OpenMontage transcriber)
+        run: python3 scripts/run_transcribe.py
+
+      - name: Generate subtitles (OpenMontage subtitle_gen)
+        run: python3 scripts/run_subtitle_gen.py
+
+      - name: Build animated captions
+        run: python3 scripts/build_ass.py
+
+      - name: Assemble video (FFmpeg)
+        run: bash scripts/build_video.sh
+
+      - name: Burn captions (OpenMontage video_compose)
+        run: python3 scripts/burn_captions.py
+
+      - name: Verify output
+        run: |
+          ffprobe -v error -show_entries format=duration,size \
+            -show_entries stream=codec_type,codec_name,width,height,r_frame_rate \
+            -of default=noprint_wrappers=1 work/book-reel-ugc.mp4
+          ls -la work/book-reel-ugc.mp4
+
+      - name: Upload video artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: book-reel-ugc
+          path: work/book-reel-ugc.mp4
+          retention-days: 7
