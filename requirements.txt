@@ -1,0 +1,5 @@
+# Python dependencies for the OpenMontage render pipeline.
+# faster-whisper runs on CTranslate2 (NOT torch) — no GPU, no torch needed.
+# av is pinned: av 19 broke faster-whisper's av.open call; 12.3.0 is known good.
+faster-whisper
+av==12.3.0
